@@ -1,0 +1,440 @@
+import tkinter as tk
+from tkinter import simpledialog, messagebox, Scrollbar, PhotoImage
+import random
+import tkinter.font as tkFont
+import json
+import pandas as pd
+import re
+import os
+
+CREDENTIALS_FILE = "credentials.txt"
+
+class AuthWindow:
+    def __init__(self, app, is_register=False):
+        self.app = app
+        self.root = tk.Toplevel(app.root)
+        self.root.title("Login" if not is_register else "Register")  # Set the window title
+
+        # Create labels and entry fields
+        self.username_label = tk.Label(self.root, text="Username:")
+        self.password_label = tk.Label(self.root, text="Password:")
+        self.username_entry = tk.Entry(self.root)
+        self.password_entry = tk.Entry(self.root, show="*")
+
+        # Create buttons
+        self.login_button = tk.Button(self.root, text="Login", command=self.login)
+        self.register_button = tk.Button(self.root, text="Register", command=self.register)
+        
+        # Layout widgets
+        self.username_label.grid(row=0, column=0, padx=10, pady=5, sticky="e")
+        self.username_entry.grid(row=0, column=1, padx=10, pady=5)
+        self.password_label.grid(row=1, column=0, padx=10, pady=5, sticky="e")
+        self.password_entry.grid(row=1, column=1, padx=10, pady=5)
+
+        if is_register:
+            # If it's registration mode, only show the register button
+            self.register_button.grid(row=2, columnspan=2, pady=10)
+        else:
+            # If it's login mode, show both login and register buttons
+            self.login_button.grid(row=2, column=0, padx=10, pady=5)
+            self.register_button.grid(row=2, column=1, padx=10, pady=5)
+
+        # Center the window and set its size
+        self.center_window()
+        self.root.attributes('-topmost', True)  # Ensure the window is always on top
+
+    def center_window(self):
+        # Calculate the center position of the screen
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        window_width = 200  # Adjust the width as needed
+        window_height = 100  # Adjust the height as needed
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+
+        # Set the window size and position
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+        self.register_button.grid(row=2, column=1)
+
+        self.root.lift()
+
+    def login(self):
+        username = self.username_entry.get()
+        password = self.password_entry.get()
+        if not username or not password:
+            messagebox.showerror("Error", "Both fields are required.")
+            return
+        
+        with open(CREDENTIALS_FILE, 'r') as file:
+            credentials = file.readlines()
+        
+        if f"{username}:{password}\n" in credentials:
+            messagebox.showinfo("Success", "Login successful!")
+            self.root.destroy()
+            self.app.login_successful()
+        else:
+            messagebox.showerror("Error", "Invalid credentials")
+  
+
+    def register(self):
+        username = self.username_entry.get()
+        password = self.password_entry.get()
+        if not username or not password:
+            messagebox.showerror("Error", "Both fields are required.")
+            return
+        
+        with open(CREDENTIALS_FILE, 'a') as file:
+            file.write(f"{username}:{password}\n")
+        
+        messagebox.showinfo("Success", "Registration successful!")
+        
+        
+        self.root.destroy()
+        self.app.registration_successful()   
+        
+# File where user profile data will be saved
+DATA_FILE = "user_profile.json"
+BOOKS_DATA = "C:\\Users\\kelli\\Downloads\\Bookburn\\books_data.csv"
+
+# Load the books data
+books_df = pd.read_csv(BOOKS_DATA)
+
+def load_user_profile():
+    """Load user profile data from file or return default profile if file doesn't exist."""
+    try:
+        with open(DATA_FILE, 'r') as file:
+            profile = json.load(file)
+    except FileNotFoundError:
+        # Extract all unique genres from books data
+        unique_genres = set()
+        for genres_list in books_df['categories']:
+            if isinstance(genres_list, list):
+                unique_genres.update(genres_list)
+        # Initialize genre_weights with a weight of 1 for each unique genre
+        genre_weights = {genre: 1 for genre in unique_genres}
+        
+        # Default user profile
+        profile = {
+            "bio": "",
+            "saved_books": [],
+            "liked_books": [],
+            "disliked_books": [],
+            "genre_weights": genre_weights  # Use the dynamically generated genre_weights
+        }
+    return profile
+
+user_profile = load_user_profile()
+user_profile["following"] = []
+user_profile["id"] = "user_001"  # Main user's ID
+
+# Mock directory of other users:
+other_users = [
+    {
+        "id": "user_002",
+        "name": "Alice",
+        "bio": "Avid reader of classics and historical fiction.",
+        "liked_books": ["Pride and Prejudice", "The Great Gatsby", "1984"],
+        "favorite_books": ["Moby Dick", "War and Peace"],
+        "disliked_books": ["The Alchemist"],
+        "following": ["user_001"]
+    },
+    {
+        "id": "user_003",
+        "name": "Bob",
+        "bio": "Love science fiction and fantasy.",
+        "liked_books": ["Dune", "The Hobbit", "Brave New World"],
+        "favorite_books": ["The Lord of the Rings", "Ender's Game"],
+        "disliked_books": ["Pride and Prejudice"],
+        "following": []
+    }
+]
+
+def recommend_book():
+    """Recommend a book based on user's genre weights."""
+    # Get genre weights
+    sorted_genres = sorted(user_profile["genre_weights"].items(), key=lambda x: x[1], reverse=True)
+    
+    seen_books_titles = set(
+        [book["Title"] for book in user_profile["saved_books"]] + 
+        [book["Title"] for book in user_profile["liked_books"]] + 
+        [book["Title"] for book in user_profile["disliked_books"]]
+    )
+    
+    for genre, _ in sorted_genres:
+        genre_books = books_df[
+            (books_df['categories'].str.contains(genre, case=False, regex=False)) & 
+            (~books_df['Title'].isin(seen_books_titles)) &
+            (books_df['description'].notna())  # Ensures description is not NaN
+        ]
+        if not genre_books.empty:
+            return genre_books.sample(1).iloc[0].to_dict()
+    
+    # If all books have been seen or there are no genre matches, start recommending from the entire list again.
+    return books_df[books_df['description'].notna()].sample(1).iloc[0].to_dict()  # Ensures description is not NaN
+
+def save_user_profile(user_profile):
+    # Save the user's profile information to a JSON file
+    with open(DATA_FILE, 'w') as file:
+        json.dump(user_profile, file)
+
+class ProfileEditWindow:
+    def __init__(self, parent, user_profile):
+        self.parent = parent
+        self.user_profile = user_profile
+
+        self.window = tk.Toplevel(self.parent)  # Use the Tk instance as the parent
+        self.window.title("Edit Profile")
+
+        # Create labels and entry fields for profile information
+        self.name_label = tk.Label(self.window, text="Name:")
+        self.name_entry = tk.Entry(self.window)
+        self.name_entry.insert(0, user_profile.get("name", ""))  # Initialize with existing name
+
+        self.location_label = tk.Label(self.window, text="Location:")
+        self.location_entry = tk.Entry(self.window)
+        self.location_entry.insert(0, user_profile.get("location", ""))  # Initialize with existing location
+
+        self.bio_label = tk.Label(self.window, text="Bio:")
+        self.bio_text = tk.Text(self.window, height=5, width=40)
+        self.bio_text.insert(tk.END, user_profile.get("bio", ""))  # Initialize with existing bio
+
+        # Create a "Save" button to save changes
+        self.save_button = tk.Button(self.window, text="Save", command=self.save_profile)
+
+        # Layout widgets
+        self.name_label.grid(row=0, column=0, padx=10, pady=5, sticky='w')
+        self.name_entry.grid(row=0, column=1, padx=10, pady=5)
+        self.location_label.grid(row=1, column=0, padx=10, pady=5, sticky='w')
+        self.location_entry.grid(row=1, column=1, padx=10, pady=5)
+        self.bio_label.grid(row=2, column=0, padx=10, pady=5, sticky='w')
+        self.bio_text.grid(row=2, column=1, padx=10, pady=5)
+        self.save_button.grid(row=3, columnspan=2, pady=10)
+
+    def save_profile(self):
+        # Get the updated profile information
+        name = self.name_entry.get()
+        location = self.location_entry.get()
+        bio = self.bio_text.get("1.0", tk.END).strip()  # Get the bio from the text widget
+
+        # Update the user_profile dictionary with the new information
+        self.user_profile["name"] = name
+        self.user_profile["location"] = location
+        self.user_profile["bio"] = bio
+
+        # Save the updated profile information to a file (you can implement this)
+        save_user_profile(self.user_profile)  # Implement the save_user_profile function
+
+        # Close the profile editing window
+        self.window.destroy()
+
+        # Update the display of user profile information in the main app window
+        self.parent.update_profile_display()
+
+class UserProfileWindow:
+    def __init__(self, parent, user_profile, other_users):
+        self.parent = parent  # Store the Tk instance as the parent
+        self.user_profile = user_profile
+
+        self.window = tk.Toplevel(self.parent)  # Use the Tk instance as the parent
+        self.user_profile = user_profile
+
+        self.bio_label = tk.Label(self.window, text=f"Bio: {user_profile['bio']}")
+        self.bio_label.grid(row=0, column=0, pady=10)
+
+        self.edit_button = tk.Button(self.window, text="Edit Profile", command=self.edit_profile)
+        self.edit_button.grid(row=1, column=0, pady=10)
+
+        self.window.title("User Profile")
+
+    def edit_profile(self):
+        ProfileEditWindow(self.parent, self.user_profile)  # Pass the Tk instance as the parent
+
+class BookBurnApp:
+    def __init__(self, root, user_profile, other_users):
+        self.root = root
+        self.user_profile = user_profile
+        self.other_users = other_users
+        self.root.title("Book Burn🔥")
+        self.root.geometry("800x700")
+        self.root.configure(bg="#2c3e50")  # Dark blueish color
+        self.is_logged_in = False
+        self.profile_icon = tk.PhotoImage(file='profile_icon1.png')
+        self.settings_icon = tk.PhotoImage(file='settings_icon1.png')
+        self.show_login_or_register()  # Call this method to decide which screen to show initially
+
+    def show_login_or_register(self):
+        # Check if the user is already registered. If not, show registration screen.
+        if not os.path.exists(CREDENTIALS_FILE) or os.path.getsize(CREDENTIALS_FILE) == 0:
+            self.auth_window = AuthWindow(self, is_register=True)
+        else:
+            self.auth_window = AuthWindow(self, is_register=False)
+
+    def registration_successful(self):
+        # Code to execute after a successful registration
+        self.is_logged_in = True
+        self.show_main_app_window()
+
+    def show_main_app_window(self):
+        self.profile_button = tk.Button(self.root, image=self.profile_icon, command=self.show_profile)
+        self.settings_button = tk.Button(self.root, image=self.settings_icon, command=self.show_settings)
+
+
+        # Position icon buttons
+        self.profile_button.grid(row=0, column=0, sticky='ne')  # Adjust row and column values as needed
+        self.settings_button.grid(row=0, column=1, sticky='ne')  # Adjust row and column values as needed 
+
+        # Fonts
+        title_font = tkFont.Font(size=16, weight="bold")
+        text_font = tkFont.Font(size=12)
+
+        # Title
+        title_label = tk.Label(self.root, text="Book Burn", font=title_font, bg="#2c3e50", fg="white")
+        title_label.grid(row=0, column=0, pady=15)  # Adjust row and column values as needed
+
+        # Main frame to hold text_frame and profile_frame
+        main_frame = tk.Frame(self.root, bg="#2c3e50")
+        main_frame.grid(row=1, column=0, sticky='nsew')
+
+        # Text Display Area
+        text_frame = tk.Frame(main_frame, bg="#34495e")
+        text_frame.grid(row=0, column=0, sticky="nsew", pady=20)
+        
+        self.text_area = tk.Text(text_frame, height=12, width=50, bg="#34495e", fg="white", wrap=tk.WORD, font=text_font, padx=20, pady=20, borderwidth=0, highlightthickness=0)
+        
+        # Create Scrollbar within text_frame and associate it with self.text_area
+        scrollbar = Scrollbar(text_frame, command=self.text_area.yview)
+        self.text_area['yscrollcommand'] = scrollbar.set
+        
+        # Grid placement for text area and scrollbar within text_frame
+        self.text_area.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        
+        # Configure grid to resize with window resizing
+        text_frame.grid_rowconfigure(0, weight=1)
+        text_frame.grid_columnconfigure(0, weight=1)
+        
+        self.display_book(recommend_book())
+
+        # Buttons
+        button_frame = tk.Frame(self.root, bg="#2c3e50")
+        button_frame.grid(row=2, column=0, pady=20)
+
+        self.dislike_button = tk.Button(button_frame, text="X", background="#e74c3c", foreground="white", font=text_font, width=10, height=2, command=self.on_dislike)
+        self.dislike_button.grid(row=0, column=0, padx=10)
+
+        self.save_button = tk.Button(button_frame, text="Save", background="#3498db", foreground="white", font=text_font, width=10, height=2, command=self.on_save)
+        self.save_button.grid(row=0, column=1, padx=10)
+
+        self.like_button = tk.Button(button_frame, text="✔", background="#2ecc71", foreground="white", font=text_font, width=10, height=2, command=self.on_like)
+        self.like_button.grid(row=0, column=2, padx=10)
+    
+        # Configure grid to resize with window resizing
+        main_frame.grid_rowconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(0, weight=1)
+
+    def login_successful(self):
+        self.is_logged_in = True
+        self.show_main_app_window()
+
+    def show_profile(self):
+        UserProfileWindow(self.root, self.user_profile, self.other_users)
+
+    def show_settings(self):
+        settings_window = tk.Toplevel(self.root)
+        settings_window.title("Settings")
+
+    def display_book(self, book):
+        self.current_book = book
+        content = f"Title: {book['Title']}\n\nDescription:\n{book['description']}"
+        self.text_area.delete(1.0, tk.END)
+        self.text_area.insert(tk.END, content)
+
+    def dislike_book(self, book):
+        self.user_profile["disliked_books"].append(book)
+        for genre in book["categories"]:
+            # Ensure the genre exists in genre_weights, and decrement its weight
+            self.user_profile["genre_weights"].setdefault(genre, 1)
+            self.user_profile["genre_weights"][genre] -= 1
+
+    def save_book(self, book):
+        self.user_profile["saved_books"].append(book)
+        for genre in book["categories"]:
+            # Ensure the genre exists in genre_weights, and increment its weight
+            self.user_profile["genre_weights"].setdefault(genre, 1)
+            self.user_profile["genre_weights"][genre] += 2
+
+    def like_book(self, book):
+        self.user_profile["liked_books"].append(book)
+        for genre in book["categories"]:
+            # Ensure the genre exists in genre_weights, and increment its weight
+            self.user_profile["genre_weights"].setdefault(genre, 1)
+            self.user_profile["genre_weights"][genre] += 1
+
+    def on_dislike(self):
+        self.dislike_book(self.current_book)
+        self.display_book(recommend_book())
+
+    def on_save(self):
+        self.save_book(self.current_book)
+        self.display_book(recommend_book())
+
+    def on_like(self):
+        self.like_book(self.current_book)
+        self.display_book(recommend_book())
+
+    def logout(self):
+    # Step 1: Set the login status to False
+        self.is_logged_in = False
+
+    # Step 2: Destroy the main app window elements
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
+    # Step 3: Show the login or registration window
+        self.show_login_or_register()
+
+
+class RegistrationWindow:
+    def __init__(self, app):
+        self.app = app
+        self.root = tk.Toplevel(self.app.root)  # Ensure self.app.root is passed to tk.Toplevel
+        
+        self.frame = tk.Frame(self.root)  # Create a new frame
+        self.frame.grid(row=0, column=0)
+
+        # Create labels and entry fields
+        self.username_label = tk.Label(self.frame, text="Username:")  # Notice self.frame instead of root
+        self.username_label.grid(row=0, column=0, sticky='e', padx=5, pady=5)
+        
+        self.username_entry = tk.Entry(self.frame)  # Notice self.frame instead of root
+        self.username_entry.grid(row=0, column=1, padx=5, pady=5)
+        
+        self.password_label = tk.Label(self.frame, text="Password:")  # Notice self.frame instead of root
+        self.password_label.grid(row=1, column=0, sticky='e', padx=5, pady=5)
+        
+        self.password_entry = tk.Entry(self.frame, show="*")  # Notice self.frame instead of root
+        self.password_entry.grid(row=1, column=1, padx=5, pady=5)
+
+        # Create register button
+        self.register_button = tk.Button(self.frame, text="Register", command=self.register)  # Notice self.frame instead of root
+        self.register_button.grid(row=2, columnspan=2, pady=10)
+
+    def register(self):
+        username = self.username_entry.get()  # Get the username from the entry field
+        password = self.password_entry.get()  # Get the password from the entry field
+        if not username or not password:
+            messagebox.showerror("Error", "Both fields are required.")
+        else:
+            with open(CREDENTIALS_FILE, 'a') as file:  # Assuming CREDENTIALS_FILE is defined
+                file.write(f"{username}:{password}\n")
+            messagebox.showinfo("Success", "Registration successful!")
+            self.root.destroy()
+            self.app.registration_successful()  # Assuming registration_successful is a method of self.app
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    user_profile = load_user_profile()  # Load user profile
+    other_users = []  # Assuming no other user data is available, replace with your method if available
+    app = BookBurnApp(root, user_profile, other_users)  # Now passing all three required arguments
+    root.mainloop()
